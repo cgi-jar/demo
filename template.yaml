@@ -49,6 +49,18 @@ Resources:
       PublicAccessBlockConfiguration:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+  raw:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-lake-raw
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: alias/aws/s3
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
   logs:
     Type: AWS::S3::Bucket
     Properties:
@@ -160,6 +172,14 @@ Resources:
       Tracing: Active
       Policies:
         - AWSXrayWriteOnlyAccess
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: alias/aws/sqs
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-Topic
   liaison:
     Type: AWS::EC2::Instance
     Properties:
@@ -175,14 +195,69 @@ Resources:
             VolumeSize: '20'
         - DeviceName: /dev/sdk
           NoDevice: {}
-  Queue:
-    Type: AWS::SQS::Queue
+  Function2:
+    Type: AWS::Serverless::Function
     Properties:
-      KmsMasterKeyId: alias/aws/sqs
-  Topic:
-    Type: AWS::SNS::Topic
+      FunctionName: !Sub ${AWS::StackName}-Function2
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: Function2
+      CodeUri: src/incoming
+      Handler: lambda_handler.lambda_function
+      Runtime: python3.8
+      MemorySize: 3008
+      Timeout: 600
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+  rawdata:
+    Type: AWS::Serverless::Function
     Properties:
-      TopicName: !Sub ${AWS::StackName}-Topic
+      FunctionName: !Sub ${AWS::StackName}-rawdata
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: rawdata
+      CodeUri: src/incoming
+      Handler: lambda_handler.lambda_function
+      Runtime: python3.8
+      MemorySize: 3008
+      Timeout: 600
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+  incoming:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-incoming
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: incoming
+      CodeUri: src/incoming
+      Handler: lambda_handler.lambda_function
+      Runtime: python3.8
+      MemorySize: 3008
+      Timeout: 600
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - S3CrudPolicy:
+            BucketName: !Ref raw
+        - S3CrudPolicy:
+            BucketName: !Ref raw
+      Events:
+        received:
+          Type: S3
+          Properties:
+            Bucket: !Ref received
+            Events:
+              - s3:ObjectCreated:*
+              - s3:ObjectRemoved:*
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref raw
+          BUCKET_ARN: !GetAtt raw.Arn
+          BUCKET_NAME_2: !Ref raw
+          BUCKET_ARN_2: !GetAtt raw.Arn
 Parameters:
   StackTagName:
     Type: String
